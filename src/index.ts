@@ -1,7 +1,7 @@
 import { fromHono } from "chanfana";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { EraseObjectInImage } from "./endpoints/eraseImage";
+import { EraseObjectInImage } from "./endpoints/eraseObjectInImage";
 import { Env } from "./types";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -19,6 +19,6 @@ const openapi = fromHono( app, {
   docs_url: "/",
 } );
 
-openapi.post( "/api/erase", EraseObjectInImage );
+openapi.post( "/api/erase-object-in-image", EraseObjectInImage );
 
 export default app;

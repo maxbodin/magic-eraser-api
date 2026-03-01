@@ -2,10 +2,10 @@ import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { type AppContext } from "../types";
 
-export class EraseImage extends OpenAPIRoute {
+export class EraseObjectInImage extends OpenAPIRoute {
   schema = {
     tags: ["AI Tools"],
-    summary: "Erase an object from an image using AI",
+    summary: "Erase an object from an image using AI. Generate erasure variations with strength and guidance combinations",
     request: {
       body: {
         content: {
@@ -28,10 +28,19 @@ export class EraseImage extends OpenAPIRoute {
     },
     responses: {
       "200": {
-        description: "Returns the modified image",
+        description: "Returns a JSON object containing multiple image variations.",
         content: {
-          "image/png": {
-            schema: z.any().openapi( { type: "string", format: "binary" } ),
+          "application/json": {
+            schema: z.object( {
+              success: z.boolean(),
+              variations: z.array(
+                z.object( {
+                  strength: z.number(),
+                  guidance: z.number(),
+                  image: z.string().openapi( { description: "Base64 encoded PNG" } ),
+                } )
+              ),
+            } ),
           },
         },
       },
@@ -39,10 +48,7 @@ export class EraseImage extends OpenAPIRoute {
         description: "Bad Request",
         content: {
           "application/json": {
-            schema: z.object( {
-              success: z.boolean(),
-              error: z.string(),
-            } ),
+            schema: z.object( { success: z.boolean(), error: z.string() } ),
           },
         },
       },
@@ -50,10 +56,7 @@ export class EraseImage extends OpenAPIRoute {
         description: "Server Error",
         content: {
           "application/json": {
-            schema: z.object( {
-              success: z.boolean(),
-              error: z.string(),
-            } ),
+            schema: z.object( { success: z.boolean(), error: z.string() } ),
           },
         },
       },
@@ -66,17 +69,7 @@ export class EraseImage extends OpenAPIRoute {
 
       const imageFile = body["image"];
       const maskFile = body["mask"];
-      const prompt = "Perform targeted object removal on the provided image. Remove the object entirely and reconstruct the occluded background using context-aware generative inpainting. The reconstruction must:\n" +
-        "• Preserve global illumination consistency (intensity, color temperature, shadow direction, ambient occlusion).\n" +
-        "• Maintain structural continuity (lines, edges, perspective geometry, vanishing points).\n" +
-        "• Ensure texture coherence (grain, noise distribution, surface frequency patterns).\n" +
-        "• Match depth of field, focus characteristics, and lens distortion parameters.\n" +
-        "• Preserve environmental reflections and refractions if present.\n" +
-        "• Maintain photometric realism with no visible seams, halos, blur patches, or repetition artifacts.\n" +
-        "Use surrounding pixels as contextual priors to synthesize a statistically plausible background consistent with scene semantics.\n" +
-        "Final output must appear as if the removed object never existed in the original capture.\n" +
-        "Do not alter unrelated objects, framing, aspect ratio, or color grading.\n" +
-        "Output a single, fully reconstructed, high-resolution image with seamless blending and no detectable manipulation artifacts.";
+      const prompt = "remove object, seamless empty background matching texture";
 
       if (!imageFile || !( imageFile instanceof File )) {
         return Response.json( { success: false, error: "Missing valid 'image' file" }, { status: 400 } );
@@ -91,20 +84,66 @@ export class EraseImage extends OpenAPIRoute {
       const imageArray = Array.from( new Uint8Array( imageArrayBuffer ) );
       const maskArray = Array.from( new Uint8Array( maskArrayBuffer ) );
 
-      const response = await c.env.AI.run(
-        "@cf/runwayml/stable-diffusion-v1-5-inpainting",
-        {
-          prompt: prompt,
-          image: imageArray,
-          mask: maskArray,
-          guidance: 10,
-        }
-      );
+      const strengths = [0.8, 0.9, 1.0];
+      const guidances = [7.5, 8, 9, 10, 11, 12, 13];
 
-      return new Response( response, {
-        headers: {
-          "Content-Type": "image/png",
-        },
+      // Create all combinations.
+      const combinations = [];
+      for (const s of strengths) {
+        for (const g of guidances) {
+          combinations.push( { strength: s, guidance: g } );
+        }
+      }
+
+      console.log( `Generating ${ combinations.length } variations...` );
+
+      const aiPromises = combinations.map( async ( config ) => {
+        try {
+          const response = await c.env.AI.run(
+            "@cf/runwayml/stable-diffusion-v1-5-inpainting",
+            {
+              prompt: prompt,
+              image: imageArray,
+              mask: maskArray,
+              strength: config.strength,
+              guidance: config.guidance,
+            }
+          );
+
+          // Convert ArrayBuffer to Base64.
+          const arrayBuffer = await new Response( response ).arrayBuffer();
+          const bytes = new Uint8Array( arrayBuffer );
+          let binary = "";
+          const len = bytes.byteLength;
+          for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode( bytes[i] );
+          }
+          const base64String = btoa( binary );
+
+          return {
+            strength: config.strength,
+            guidance: config.guidance,
+            image: `data:image/png;base64,${ base64String }`,
+            error: null
+          };
+        } catch (err: any) {
+          console.error( `Failed gen (S:${ config.strength }, G:${ config.guidance })`, err );
+          return {
+            strength: config.strength,
+            guidance: config.guidance,
+            image: null,
+            error: "Failed"
+          };
+        }
+      } );
+
+      const results = await Promise.all( aiPromises );
+      const successResults = results.filter( r => r.image !== null );
+
+      return Response.json( {
+        success: true,
+        count: successResults.length,
+        variations: successResults
       } );
 
     } catch (error: any) {

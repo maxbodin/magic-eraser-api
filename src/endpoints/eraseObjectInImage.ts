@@ -1,6 +1,8 @@
 import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { type AppContext } from "../types";
+import { saveDebugImageAndMask } from "../utils/debug-image-saver";
+import { getImageDimensions, resizeImage } from "../utils/image-processing";
 
 export class EraseObjectInImage extends OpenAPIRoute {
   schema = {
@@ -33,32 +35,22 @@ export class EraseObjectInImage extends OpenAPIRoute {
           "application/json": {
             schema: z.object( {
               success: z.boolean(),
-              variations: z.array(
-                z.object( {
-                  strength: z.number(),
-                  guidance: z.number(),
-                  image: z.string().openapi( { description: "Base64 encoded PNG" } ),
-                } )
-              ),
-            } ),
-          },
-        },
+              variations: z.array( z.object( {
+                strength: z.number(),
+                guidance: z.number(),
+                image: z.string().openapi( { description: "Base64 encoded PNG" } )
+              } ) )
+            } )
+          }
+        }
       },
       "400": {
         description: "Bad Request",
-        content: {
-          "application/json": {
-            schema: z.object( { success: z.boolean(), error: z.string() } ),
-          },
-        },
+        content: { "application/json": { schema: z.object( { success: z.boolean(), error: z.string() } ) } }
       },
       "500": {
         description: "Server Error",
-        content: {
-          "application/json": {
-            schema: z.object( { success: z.boolean(), error: z.string() } ),
-          },
-        },
+        content: { "application/json": { schema: z.object( { success: z.boolean(), error: z.string() } ) } }
       },
     },
   };
@@ -81,19 +73,28 @@ export class EraseObjectInImage extends OpenAPIRoute {
       const imageArrayBuffer = await imageFile.arrayBuffer();
       const maskArrayBuffer = await maskFile.arrayBuffer();
 
-      const imageArray = Array.from( new Uint8Array( imageArrayBuffer ) );
-      const maskArray = Array.from( new Uint8Array( maskArrayBuffer ) );
+      saveDebugImageAndMask( c, imageArrayBuffer, maskArrayBuffer );
+
+      const { width: originalWidth, height: originalHeight } = await getImageDimensions( imageArrayBuffer );
+      console.log( `Original image dimensions: ${ originalWidth }x${ originalHeight }` );
+
+      const {
+        buffer: resizedImageBuffer,
+        width: processWidth,
+        height: processHeight
+      } = await resizeImage( imageArrayBuffer, originalWidth, originalHeight );
+      const { buffer: resizedMaskBuffer } = await resizeImage( maskArrayBuffer, originalWidth, originalHeight );
+
+      console.log( `Processing dimensions: ${ processWidth }x${ processHeight }` );
+
+      const imageArray = Array.from( new Uint8Array( resizedImageBuffer ) );
+      const maskArray = Array.from( new Uint8Array( resizedMaskBuffer ) );
 
       const strengths = [0.8, 0.9, 1.0];
       const guidances = [7.5, 8, 9, 10, 11, 12, 13];
 
       // Create all combinations.
-      const combinations = [];
-      for (const s of strengths) {
-        for (const g of guidances) {
-          combinations.push( { strength: s, guidance: g } );
-        }
-      }
+      const combinations = strengths.flatMap( s => guidances.map( g => ( { strength: s, guidance: g } ) ) );
 
       console.log( `Generating ${ combinations.length } variations...` );
 
@@ -111,12 +112,17 @@ export class EraseObjectInImage extends OpenAPIRoute {
           );
 
           // Convert ArrayBuffer to Base64.
-          const arrayBuffer = await new Response( response ).arrayBuffer();
-          const bytes = new Uint8Array( arrayBuffer );
+          const resultBuffer = await new Response( response ).arrayBuffer();
+
+          // Resize result back to original dimensions to preserve aspect ratio
+          const restoredBuffer = await resizeImage( resultBuffer, processWidth, processHeight, originalWidth, originalHeight );
+          const bytes = new Uint8Array( restoredBuffer.buffer );
+
+          // Worker optimization: Chunk conversion to avoid "Maximum call stack size exceeded"
           let binary = "";
-          const len = bytes.byteLength;
-          for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode( bytes[i] );
+          const chunkSize = 8192;
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode.apply( null, Array.from( bytes.subarray( i, i + chunkSize ) ) );
           }
           const base64String = btoa( binary );
 

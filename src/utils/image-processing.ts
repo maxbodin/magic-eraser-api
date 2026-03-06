@@ -147,7 +147,7 @@ export async function resizeImage(
   } );
 
   const resizedBuffer = await resizedImage.getBuffer( "image/png", {
-    quality: 100,
+    quality: 75,
     compression: 0
   } );
 

@@ -91,7 +91,7 @@ export class EraseObjectInImage extends OpenAPIRoute {
       const maskArray = Array.from( new Uint8Array( resizedMaskBuffer ) );
 
 			const strengths = [0.8, 0.9, 1.0];
-			const guidances = [9, 10, 11, 12, 13];
+			const guidances = [8, 10, 11, 13];
 
       // Create all combinations.
       const combinations = strengths.flatMap( s => guidances.map( g => ( { strength: s, guidance: g } ) ) );
@@ -184,7 +184,7 @@ export class EraseObjectInImage extends OpenAPIRoute {
 
         // Add delay between API calls (200ms)
         if (i > 0) {
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
 
         console.log(`Processing variation ${i + 1}/${combinations.length} (S:${config.strength}, G:${config.guidance})`);

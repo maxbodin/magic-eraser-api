@@ -7,12 +7,12 @@ import { compositeImages, getImageDimensions, resizeImage } from "../utils/image
 export class EraseObjectInImage extends OpenAPIRoute {
   schema = {
     tags: ["AI Tools"],
-    summary: "Erase an object from an image using AI. Generate erasure variations with strength and guidance combinations",
+    summary: "Erase an object from an image using AI (Generate a single variation)",
     request: {
       body: {
         content: {
           "multipart/form-data": {
-            schema: z.object( {
+            schema: z.object({
               image: z.any().openapi( {
                 description: "The original image file (JPEG/PNG)",
                 type: "string",
@@ -23,24 +23,24 @@ export class EraseObjectInImage extends OpenAPIRoute {
                 type: "string",
                 format: "binary",
               } ),
-            } ),
+              strength: z.string().optional().openapi({ description: "e.g. 0.8" }),
+              guidance: z.string().optional().openapi({ description: "e.g. 8" }),
+            }),
           },
         },
       },
     },
     responses: {
       "200": {
-        description: "Returns a JSON object containing multiple image variations.",
+        description: "Returns a single generated variation",
         content: {
           "application/json": {
-            schema: z.object( {
+            schema: z.object({
               success: z.boolean(),
-              variations: z.array( z.object( {
-                strength: z.number(),
-                guidance: z.number(),
-                image: z.string().openapi( { description: "Base64 encoded PNG" } )
-              } ) )
-            } )
+              strength: z.number(),
+              guidance: z.number(),
+              image: z.string().openapi( { description: "Base64 encoded PNG" } )
+            })
           }
         }
       },
@@ -61,6 +61,8 @@ export class EraseObjectInImage extends OpenAPIRoute {
 
       const imageFile = body["image"];
       const maskFile = body["mask"];
+      const strength = body["strength"] ? parseFloat(body["strength"] as string) : 0.8;
+      const guidance = body["guidance"] ? parseInt(body["guidance"] as string, 10) : 8;
       const prompt = "remove object, seamless empty background matching texture";
 
       if (!imageFile || !( imageFile instanceof File )) {
@@ -90,116 +92,51 @@ export class EraseObjectInImage extends OpenAPIRoute {
       const imageArray = Array.from( new Uint8Array( resizedImageBuffer ) );
       const maskArray = Array.from( new Uint8Array( resizedMaskBuffer ) );
 
-			const strengths = [0.8, 0.9, 1.0];
-			const guidances = [8, 10, 11, 13];
-
-      // Create all combinations.
-      const combinations = strengths.flatMap( s => guidances.map( g => ( { strength: s, guidance: g } ) ) );
-
-      console.log( `Generating ${ combinations.length } variations...` );
-
-      const callAIWithRetry = async (
-        config: { strength: number; guidance: number },
-        maxRetries: number = 3
-      ): Promise<any> => {
-        let lastError: any;
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
-          try {
-            // Add delay between attempts (exponential backoff).
-            if (attempt > 0) {
-              const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
-              console.log(`Retry attempt ${attempt} for (S:${config.strength}, G:${config.guidance}) - waiting ${delay}ms`);
-              await new Promise(resolve => setTimeout(resolve, delay));
-            }
-
-            const response = await c.env.AI.run(
-              "@cf/runwayml/stable-diffusion-v1-5-inpainting",
-              {
-                prompt: prompt,
-                image: imageArray,
-                mask: maskArray,
-                strength: config.strength,
-                guidance: config.guidance,
-              }
-            );
-
-            // Convert ArrayBuffer to Base64.
-            const resultBuffer = await new Response( response ).arrayBuffer();
-
-            // Resize result back to original dimensions to preserve aspect ratio.
-            const restoredBuffer = await resizeImage( resultBuffer, processWidth, processHeight, originalWidth, originalHeight );
-
-            // Composite the AI result with the original image using the mask.
-            // This ensures only the masked area is replaced.
-            const compositedBuffer = await compositeImages(
-              imageArrayBuffer,
-              restoredBuffer.buffer,
-              maskArrayBuffer,
-              originalWidth,
-              originalHeight
-            );
-
-            const bytes = new Uint8Array( compositedBuffer );
-
-            // Worker optimization: Chunk conversion to avoid "Maximum call stack size exceeded".
-            let binary = "";
-            const chunkSize = 8192;
-            for (let i = 0; i < bytes.length; i += chunkSize) {
-              binary += String.fromCharCode.apply( null, Array.from( bytes.subarray( i, i + chunkSize ) ) );
-            }
-            const base64String = btoa( binary );
-
-            return {
-              strength: config.strength,
-              guidance: config.guidance,
-              image: `data:image/png;base64,${ base64String }`,
-              error: null
-            };
-          } catch (err: any) {
-            lastError = err;
-            const isNetworkError = err.message?.includes("Network") || err.message?.includes("connection") || err.message?.includes("Upstream");
-
-            if (!isNetworkError || attempt === maxRetries - 1) {
-              // Don't retry non-network errors or if we've exhausted retries.
-              break;
-            }
-            console.warn(`Network error for (S:${config.strength}, G:${config.guidance}) on attempt ${attempt + 1}/${maxRetries}:`, err.message);
-          }
+      // Call AI once for this specific variation.
+      const response = await c.env.AI.run(
+        "@cf/runwayml/stable-diffusion-v1-5-inpainting",
+        {
+          prompt: prompt,
+          image: imageArray,
+          mask: maskArray,
+          strength: strength,
+          guidance: guidance,
         }
+      );
 
-        // All retries exhausted.
-        console.error( `Failed gen (S:${ config.strength }, G:${ config.guidance }) after retries:`, lastError );
-        return {
-          strength: config.strength,
-          guidance: config.guidance,
-          image: null,
-          error: "Failed"
-        };
-      };
 
-      // Process variations sequentially with delays to avoid overwhelming the API.
-      const results: any[] = [];
-      for (let i = 0; i < combinations.length; i++) {
-        const config = combinations[i];
+      // Convert ArrayBuffer to Base64.
+      const resultBuffer = await new Response( response ).arrayBuffer();
 
-        // Add delay between API calls (200ms)
-        if (i > 0) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
+      // Resize result back to original dimensions to preserve aspect ratio.
+      const restoredBuffer = await resizeImage( resultBuffer, processWidth, processHeight, originalWidth, originalHeight );
 
-        console.log(`Processing variation ${i + 1}/${combinations.length} (S:${config.strength}, G:${config.guidance})`);
-        const result = await callAIWithRetry(config);
-        results.push(result);
+      // Composite the AI result with the original image using the mask.
+      // This ensures only the masked area is replaced.
+      const compositedBuffer = await compositeImages(
+        imageArrayBuffer,
+        restoredBuffer.buffer,
+        maskArrayBuffer,
+        originalWidth,
+        originalHeight
+      );
+
+      // Chunked Base64 encoding.
+      const bytes = new Uint8Array(compositedBuffer);
+      // Worker optimization: Chunk conversion to avoid "Maximum call stack size exceeded".
+      let binary = "";
+      const chunkSize = 8192;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode.apply( null, Array.from( bytes.subarray( i, i + chunkSize ) ) );
       }
-      const successResults = results.filter( r => r.image !== null );
+      const base64String = btoa( binary );
 
-      console.log(`Sending results ${successResults.length} variations...)`);
-
-      return Response.json( {
+      return Response.json({
         success: true,
-        count: successResults.length,
-        variations: successResults
-      } );
+        strength,
+        guidance,
+        image: `data:image/png;base64,${base64String}`
+      });
 
     } catch (error: any) {
       console.error( "Worker API Error:", error );

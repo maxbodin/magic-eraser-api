@@ -9,7 +9,7 @@ const app = new Hono<{ Bindings: Env }>();
 app.use(
   "/api/*",
   cors( {
-    origin: "*", // In production, remember to replace "*" with frontend Cloudflare Pages URL.
+    origin: "https://magic-eraser.maximebodin.com",
     allowMethods: ["POST", "GET", "OPTIONS"],
     allowHeaders: ["Content-Type"],
   } )

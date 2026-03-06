@@ -15,7 +15,7 @@
 ## Project Structure
 
 ```
-magic-eraser-api/
+magic-eraser-api/ 
 ├── src/
 │   ├── endpoints/
 │   │   └── eraseObjectInImage.ts   # POST /api/erase-object-in-image endpoint

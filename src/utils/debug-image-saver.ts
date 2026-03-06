@@ -14,7 +14,8 @@ function arrayBufferToBase64( buffer: ArrayBuffer ): string {
  * @param maskArrayBuffer - The ArrayBuffer of the mask.
  */
 export function saveDebugImageAndMask( c: AppContext, imageArrayBuffer: ArrayBuffer, maskArrayBuffer: ArrayBuffer ): void {
-  if (c.env.IS_LOCAL !== "true") {
+  const isLocal = (c.env as any).IS_LOCAL === "true";
+  if (!isLocal) {
     return;
   }
 

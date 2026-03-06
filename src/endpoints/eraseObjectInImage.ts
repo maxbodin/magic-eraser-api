@@ -2,7 +2,7 @@ import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { type AppContext } from "../types";
 import { saveDebugImageAndMask } from "../utils/debug-image-saver";
-import { getImageDimensions, resizeImage } from "../utils/image-processing";
+import { compositeImages, getImageDimensions, resizeImage } from "../utils/image-processing";
 
 export class EraseObjectInImage extends OpenAPIRoute {
   schema = {
@@ -90,61 +90,110 @@ export class EraseObjectInImage extends OpenAPIRoute {
       const imageArray = Array.from( new Uint8Array( resizedImageBuffer ) );
       const maskArray = Array.from( new Uint8Array( resizedMaskBuffer ) );
 
-      const strengths = [0.8, 0.9, 1.0];
-      const guidances = [7.5, 8, 9, 10, 11, 12, 13];
+			const strengths = [0.8, 0.9, 1.0];
+			const guidances = [9, 10, 11, 12, 13];
 
       // Create all combinations.
       const combinations = strengths.flatMap( s => guidances.map( g => ( { strength: s, guidance: g } ) ) );
 
       console.log( `Generating ${ combinations.length } variations...` );
 
-      const aiPromises = combinations.map( async ( config ) => {
-        try {
-          const response = await c.env.AI.run(
-            "@cf/runwayml/stable-diffusion-v1-5-inpainting",
-            {
-              prompt: prompt,
-              image: imageArray,
-              mask: maskArray,
+      const callAIWithRetry = async (
+        config: { strength: number; guidance: number },
+        maxRetries: number = 3
+      ): Promise<any> => {
+        let lastError: any;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            // Add delay between attempts (exponential backoff).
+            if (attempt > 0) {
+              const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+              console.log(`Retry attempt ${attempt} for (S:${config.strength}, G:${config.guidance}) - waiting ${delay}ms`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
+
+            const response = await c.env.AI.run(
+              "@cf/runwayml/stable-diffusion-v1-5-inpainting",
+              {
+                prompt: prompt,
+                image: imageArray,
+                mask: maskArray,
+                strength: config.strength,
+                guidance: config.guidance,
+              }
+            );
+
+            // Convert ArrayBuffer to Base64.
+            const resultBuffer = await new Response( response ).arrayBuffer();
+
+            // Resize result back to original dimensions to preserve aspect ratio.
+            const restoredBuffer = await resizeImage( resultBuffer, processWidth, processHeight, originalWidth, originalHeight );
+
+            // Composite the AI result with the original image using the mask.
+            // This ensures only the masked area is replaced.
+            const compositedBuffer = await compositeImages(
+              imageArrayBuffer,
+              restoredBuffer.buffer,
+              maskArrayBuffer,
+              originalWidth,
+              originalHeight
+            );
+
+            const bytes = new Uint8Array( compositedBuffer );
+
+            // Worker optimization: Chunk conversion to avoid "Maximum call stack size exceeded".
+            let binary = "";
+            const chunkSize = 8192;
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+              binary += String.fromCharCode.apply( null, Array.from( bytes.subarray( i, i + chunkSize ) ) );
+            }
+            const base64String = btoa( binary );
+
+            return {
               strength: config.strength,
               guidance: config.guidance,
+              image: `data:image/png;base64,${ base64String }`,
+              error: null
+            };
+          } catch (err: any) {
+            lastError = err;
+            const isNetworkError = err.message?.includes("Network") || err.message?.includes("connection") || err.message?.includes("Upstream");
+
+            if (!isNetworkError || attempt === maxRetries - 1) {
+              // Don't retry non-network errors or if we've exhausted retries.
+              break;
             }
-          );
-
-          // Convert ArrayBuffer to Base64.
-          const resultBuffer = await new Response( response ).arrayBuffer();
-
-          // Resize result back to original dimensions to preserve aspect ratio
-          const restoredBuffer = await resizeImage( resultBuffer, processWidth, processHeight, originalWidth, originalHeight );
-          const bytes = new Uint8Array( restoredBuffer.buffer );
-
-          // Worker optimization: Chunk conversion to avoid "Maximum call stack size exceeded"
-          let binary = "";
-          const chunkSize = 8192;
-          for (let i = 0; i < bytes.length; i += chunkSize) {
-            binary += String.fromCharCode.apply( null, Array.from( bytes.subarray( i, i + chunkSize ) ) );
+            console.warn(`Network error for (S:${config.strength}, G:${config.guidance}) on attempt ${attempt + 1}/${maxRetries}:`, err.message);
           }
-          const base64String = btoa( binary );
-
-          return {
-            strength: config.strength,
-            guidance: config.guidance,
-            image: `data:image/png;base64,${ base64String }`,
-            error: null
-          };
-        } catch (err: any) {
-          console.error( `Failed gen (S:${ config.strength }, G:${ config.guidance })`, err );
-          return {
-            strength: config.strength,
-            guidance: config.guidance,
-            image: null,
-            error: "Failed"
-          };
         }
-      } );
 
-      const results = await Promise.all( aiPromises );
+        // All retries exhausted.
+        console.error( `Failed gen (S:${ config.strength }, G:${ config.guidance }) after retries:`, lastError );
+        return {
+          strength: config.strength,
+          guidance: config.guidance,
+          image: null,
+          error: "Failed"
+        };
+      };
+
+      // Process variations sequentially with delays to avoid overwhelming the API.
+      const results: any[] = [];
+      for (let i = 0; i < combinations.length; i++) {
+        const config = combinations[i];
+
+        // Add delay between API calls (200ms)
+        if (i > 0) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+
+        console.log(`Processing variation ${i + 1}/${combinations.length} (S:${config.strength}, G:${config.guidance})`);
+        const result = await callAIWithRetry(config);
+        results.push(result);
+      }
       const successResults = results.filter( r => r.image !== null );
+
+      console.log(`Sending results ${successResults.length} variations...)`);
 
       return Response.json( {
         success: true,

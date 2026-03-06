@@ -1,6 +1,63 @@
 import { Jimp } from "jimp";
 
 /**
+ * Composites the AI-generated image onto the original image using the mask.
+ * Only the masked area (white pixels) from the AI result will be visible.
+ *
+ * @param originalBuffer - The original image buffer
+ * @param aiResultBuffer - The AI-generated inpainted image buffer
+ * @param maskBuffer - The mask buffer (white = area to replace, black = keep original)
+ * @param width - Width of all images
+ * @param height - Height of all images
+ * @returns Composited image buffer
+ */
+export async function compositeImages(
+	originalBuffer: ArrayBuffer | Buffer,
+	aiResultBuffer: ArrayBuffer | Buffer,
+	maskBuffer: ArrayBuffer | Buffer,
+	width: number,
+	height: number
+): Promise<ArrayBuffer> {
+	const originalImageBuffer = originalBuffer instanceof ArrayBuffer ? Buffer.from( originalBuffer ) : originalBuffer;
+	const aiResultImageBuffer = aiResultBuffer instanceof ArrayBuffer ? Buffer.from( aiResultBuffer ) : aiResultBuffer;
+	const maskImageBuffer = maskBuffer instanceof ArrayBuffer ? Buffer.from( maskBuffer ) : maskBuffer;
+
+	const originalImage = await Jimp.fromBuffer( originalImageBuffer );
+	const aiResultImage = await Jimp.fromBuffer( aiResultImageBuffer );
+	const maskImage = await Jimp.fromBuffer( maskImageBuffer );
+
+	// Create a copy of the original image to composite onto.
+	const composited = originalImage.clone();
+
+	// Iterate through each pixel.
+	for (let y = 0; y < height; y++) {
+		for (let x = 0; x < width; x++) {
+			// Get mask pixel color value (32-bit RGBA integer).
+			const maskPixelColor = maskImage.getPixelColor( x, y );
+
+			// Extract the red channel (most significant byte after alpha).
+			// Format is typically RGBA, so shift to get the red value.
+			const maskBrightness = ( maskPixelColor >> 16 ) & 0xFF;
+
+			if (maskBrightness > 128) {
+				// Use AI result pixel where mask is white.
+				const aiPixel = aiResultImage.getPixelColor( x, y );
+				composited.setPixelColor( aiPixel, x, y );
+			}
+			// Otherwise keep the original pixel (already in composited).
+		}
+	}
+
+	// Get the composited image as PNG with high quality
+	const compositedBuffer = await composited.getBuffer( "image/png", {
+		quality: 100,
+		compression: 0
+	} );
+
+	return compositedBuffer.buffer as ArrayBuffer;
+}
+
+/**
  * Extracts width and height from an image buffer.
  * @param buffer - The image buffer (ArrayBuffer or Buffer)
  * @returns Object with width and height
@@ -20,8 +77,7 @@ export async function getImageDimensions( buffer: ArrayBuffer | Buffer ): Promis
 }
 
 /**
- * Resizes an image to dimensions that are multiples of 8 (required by Stable Diffusion)
- * while preserving the aspect ratio. Can optionally restore to original dimensions.
+ * Resizes an image to correct dimensions, while preserving the aspect ratio.
  *
  * @param buffer - The image buffer (ArrayBuffer or Buffer)
  * @param originalWidth - Original image width
@@ -96,7 +152,7 @@ export async function resizeImage(
   } );
 
   return {
-    buffer: resizedBuffer.buffer,
+    buffer: resizedBuffer.buffer as ArrayBuffer,
     width: newWidth,
     height: newHeight,
   };

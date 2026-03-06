@@ -1,29 +1,81 @@
-# Cloudflare Workers OpenAPI 3.1
+# Magic Eraser AI - API Worker
 
-This is a Cloudflare Worker with OpenAPI 3.1 using [chanfana](https://github.com/cloudflare/chanfana)
-and [Hono](https://github.com/honojs/hono).
+> Cloudflare Worker API for AI-powered object removal from images.
 
-This is an example project made to be used as a quick start into building OpenAPI compliant Workers that generates the
-`openapi.json` schema automatically from code and validates the incoming request to the defined parameters or request
-body.
+## Features
 
-## Get started
+- **AI-Powered Inpainting**: Remove unwanted objects using Cloudflare AI's `@cf/runwayml/stable-diffusion-v1-5-inpainting` model.
+- **Multiple Variations**: Generates multiple variations across different strength and guidance combinations.
+- **Smart Compositing**: Masks-based compositing ensures only the selected area is replaced, the rest of the image is preserved pixel-perfect.
+- **Aspect Ratio Preservation**: Images are resized before processing and restored to original dimensions afterward.
+- **Retry Logic**: Automatic exponential backoff retry on network/upstream errors (up to 3 attempts per variation).
+- **OpenAPI 3.1 Docs**: Auto-generated Swagger UI available at the root URL.
+- **Debug Mode**: Optional local debug logging of image and mask data as Base64.
 
-1. Sign up for [Cloudflare Workers](https://workers.dev). The free tier is more than enough for most use cases.
-2. Clone this project and install dependencies with `npm install`
-3. Run `wrangler login` to login to your Cloudflare account in wrangler
-4. Run `wrangler deploy` to publish the API to Cloudflare Workers
+## Project Structure
 
-## Project structure
+```
+magic-eraser-api/
+├── src/
+│   ├── endpoints/
+│   │   └── eraseObjectInImage.ts   # POST /api/erase-object-in-image endpoint
+│   ├── utils/
+│   │   ├── debug-image-saver.ts    # Local debug logging of image/mask Base64 data
+│   │   └── image-processing.ts     # Jimp-based resize, dimension extraction, and compositing
+│   ├── index.ts                    # Hono app entry point with CORS and OpenAPI registration
+│   └── types.ts                    # Env bindings and AppContext type definitions
+├── package.json                    # Project dependencies and scripts
+├── tsconfig.json                   # TypeScript configuration
+├── wrangler.toml                   # Cloudflare Worker configuration
+└── README.md                       # This file
+```
 
-1. Your main router is defined in `src/index.ts`.
-2. Each endpoint has its own file in `src/endpoints/`.
-3. For more information read the [chanfana documentation](https://chanfana.pages.dev/)
-   and [Hono documentation](https://hono.dev/docs).
+## API Reference
 
-## Development
+### `POST /api/erase-object-in-image`
 
-1. Run `wrangler dev` to start a local instance of the API.
-2. Open `http://localhost:8787/` in your browser to see the Swagger interface where you can try the endpoints.
-3. Changes made in the `src/` folder will automatically trigger the server to reload, you only need to refresh the
-   Swagger interface.
+Erases an object from an image using AI inpainting and returns multiple variations.
+
+**Request** — `multipart/form-data`
+
+| Field   | Type | Description                                                                  |
+|---------|------|------------------------------------------------------------------------------|
+| `image` | File | Original image (JPEG or PNG)                                                 |
+| `mask`  | File | Black-and-white mask (JPEG or PNG). White pixels indicate the area to erase. |
+
+**Response** — `application/json`
+
+```json
+{
+  "success": true,
+  "count": 12,
+  "variations": [
+    {
+      "strength": 0.8,
+      "guidance": 8,
+      "image": "data:image/png;base64,..."
+    }
+  ]
+}
+```
+
+Each variation is a Base64-encoded PNG of the full composited image with only the masked area replaced.
+
+**Error Responses**
+
+| Status | Reason                            |
+|--------|-----------------------------------|
+| `400`  | Missing or invalid `image`/`mask` |
+| `500`  | Internal server or AI model error |
+
+## Technology Stack
+
+| Layer             | Technology                                                        |
+|-------------------|-------------------------------------------------------------------|
+| Runtime           | [Cloudflare Workers](https://workers.dev)                         |
+| Web Framework     | [Hono](https://hono.dev)                                          |
+| OpenAPI           | [chanfana](https://github.com/cloudflare/chanfana)                |
+| Schema Validation | [Zod](https://zod.dev)                                            |
+| Image Processing  | [Jimp](https://github.com/jimp-dev/jimp)                          |
+| AI Model          | `@cf/runwayml/stable-diffusion-v1-5-inpainting` via Cloudflare AI |
+| Language          | TypeScript                                                        |

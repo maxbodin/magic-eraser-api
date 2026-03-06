@@ -7,7 +7,7 @@ import { Env } from "./types";
 const app = new Hono<{ Bindings: Env }>();
 
 app.use(
-  "/api/*",
+  "*",
   cors( {
     origin: "https://magic-eraser.maximebodin.com",
     allowMethods: ["POST", "GET", "OPTIONS"],

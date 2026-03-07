@@ -67,7 +67,7 @@ export class SubmitEraseJob extends OpenAPIRoute {
 		const imageBuffer = await imageFile.arrayBuffer();
 		const maskBuffer  = await maskFile.arrayBuffer();
 
-		saveDebugImageAndMask(c, imageBuffer, maskBuffer);
+		// saveDebugImageAndMask(c, imageBuffer, maskBuffer);
 
 		const jobId = crypto.randomUUID();
 

@@ -61,8 +61,6 @@ export async function eraseObject(input: EraseInput, env: AppContext["env"]): Pr
 		imageArrayBuffer, restoredBuffer, maskArrayBuffer, originalWidth, originalHeight
 	);
 
-	console.log(`VERCEL_BLOB_TOKEN : ${env.VERCEL_BLOB_TOKEN}`)
-
 	// Upload to Vercel Blob and get the public URL.
 	const { url: imageUrl } = await put(
 		`erased-images/${crypto.randomUUID()}.png`,

@@ -2,7 +2,6 @@ import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { type AppContext } from "../types";
 import { eraseObject } from "../services/imageEraser";
-import { saveDebugImageAndMask } from "../utils/debug-image-saver";
 
 export class SubmitEraseJob extends OpenAPIRoute {
 	schema = {
@@ -96,13 +95,7 @@ async function processInBackground(
 ) {
 	try {
 		const result = await eraseObject(input, env);
-
 		const payload = JSON.stringify({ status: "done", ...result });
-
-		if (payload.length > 24 * 1024 * 1024) {
-			throw new Error(`Result payload too large: ${(payload.length / 1024 / 1024).toFixed(1)}MB`);
-		}
-
 		await env.JOBS_KV.put(jobId, payload, { expirationTtl: 3600 });
 
 	} catch (err: any) {

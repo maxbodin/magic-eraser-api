@@ -9,7 +9,7 @@ const JobResultSchema = z.discriminatedUnion("status", [
 		success: z.literal(true),
 		strength: z.number(),
 		guidance: z.number(),
-		image: z.string().openapi({ description: "Base64-encoded PNG data URL" }),
+		imageUrl: z.string().url().openapi({ description: "Vercel Blob public URL to the updated image." }),
 	}),
 	z.object({
 		status: z.literal("error"),

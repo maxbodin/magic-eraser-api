@@ -9,8 +9,9 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@vercel/blob": "^2.3.3",
     "chanfana": "^2.6.3",
-    "hono": "^4.6.20",
+    "hono": "4.12.7",
     "jimp": "^1.6.0",
     "zod": "^3.24.1"
   },

@@ -1,11 +1,11 @@
 import { compositeImages, getImageDimensions, resizeImage } from "../utils/image-processing";
+import { put } from "@vercel/blob";
 import { Env } from "../types";
 
 const AI_MODEL = "@cf/runwayml/stable-diffusion-v1-5-inpainting";
 const INPAINT_PROMPT = "remove object, seamless empty background matching texture";
-const CHUNK_SIZE     = 8192;
 const MAX_RETRIES    = 3;
-const RETRY_BASE_MS  = 2000;
+const RETRY_BASE_MS  = 100;
 
 export interface EraseInput {
 	imageFile: File;
@@ -18,7 +18,7 @@ export interface EraseResult {
 	success: true;
 	strength: number;
 	guidance: number;
-	image: string; // Base64 PNG data URL.
+	imageUrl: string; // Vercel Blob public URL.
 }
 
 export async function eraseObject(input: EraseInput, env: Env): Promise<EraseResult> {
@@ -61,11 +61,18 @@ export async function eraseObject(input: EraseInput, env: Env): Promise<EraseRes
 		imageArrayBuffer, restoredBuffer, maskArrayBuffer, originalWidth, originalHeight
 	);
 
+	// Upload to Vercel Blob and get the public URL.
+	const { url: imageUrl } = await put(
+		`erased-images/${crypto.randomUUID()}.png`,
+		new Blob([compositedBuffer], { type: "image/png" }),
+		{ access: "public", token: env.VERCEL_BLOB_TOKEN }
+	);
+
 	return {
 		success: true,
 		strength,
 		guidance,
-		image: `data:image/png;base64,${toBase64(compositedBuffer)}`,
+		imageUrl,
 	};
 }
 
@@ -100,14 +107,6 @@ async function withRetry<T>(
 	throw lastError;
 }
 
-function toBase64(buffer: ArrayBuffer): string {
-	const bytes = new Uint8Array(buffer);
-	let binary = "";
-	for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-		binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK_SIZE)));
-	}
-	return btoa(binary);
-}
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));

@@ -1,6 +1,6 @@
 import { compositeImages, getImageDimensions, resizeImage } from "../utils/image-processing";
 import { put } from "@vercel/blob";
-import { Env } from "../types";
+import { type AppContext } from "../types";
 
 const AI_MODEL = "@cf/runwayml/stable-diffusion-v1-5-inpainting";
 const INPAINT_PROMPT = "remove object, seamless empty background matching texture";
@@ -21,7 +21,7 @@ export interface EraseResult {
 	imageUrl: string; // Vercel Blob public URL.
 }
 
-export async function eraseObject(input: EraseInput, env: Env): Promise<EraseResult> {
+export async function eraseObject(input: EraseInput, env: AppContext["env"]): Promise<EraseResult> {
 	const { imageFile, maskFile, strength, guidance } = input;
 
 	const imageArrayBuffer = await imageFile.arrayBuffer();
@@ -60,6 +60,8 @@ export async function eraseObject(input: EraseInput, env: Env): Promise<EraseRes
 	const compositedBuffer = await compositeImages(
 		imageArrayBuffer, restoredBuffer, maskArrayBuffer, originalWidth, originalHeight
 	);
+
+	console.log(`VERCEL_BLOB_TOKEN : ${env.VERCEL_BLOB_TOKEN}`)
 
 	// Upload to Vercel Blob and get the public URL.
 	const { url: imageUrl } = await put(

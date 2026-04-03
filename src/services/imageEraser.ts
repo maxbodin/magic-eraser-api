@@ -23,6 +23,7 @@ export interface EraseResult {
 
 export async function eraseObject(input: EraseInput, env: AppContext["env"]): Promise<EraseResult> {
 	const { imageFile, maskFile, strength, guidance } = input;
+	const startTime = Date.now();
 
 	const imageArrayBuffer = await imageFile.arrayBuffer();
 	const maskArrayBuffer = await maskFile.arrayBuffer();
@@ -38,6 +39,7 @@ export async function eraseObject(input: EraseInput, env: AppContext["env"]): Pr
 	console.log(`Processing dimensions: ${processWidth}x${processHeight}`);
 
 	// Retry the AI call, Cloudflare flags upstream drops as retryable.
+	const aiStartTime = Date.now();
 	const response = await withRetry(
 		() => env.AI.run(AI_MODEL, {
 			prompt:   INPAINT_PROMPT,
@@ -49,6 +51,7 @@ export async function eraseObject(input: EraseInput, env: AppContext["env"]): Pr
 		MAX_RETRIES,
 		RETRY_BASE_MS
 	);
+	console.log(`AI processing took ${Date.now() - aiStartTime}ms`);
 
 	const aiStream = response as ReadableStream<Uint8Array>;
 	const resultBuffer = await new Response(aiStream).arrayBuffer();
@@ -57,9 +60,11 @@ export async function eraseObject(input: EraseInput, env: AppContext["env"]): Pr
 		resultBuffer, processWidth, processHeight, originalWidth, originalHeight
 	);
 
+	const compositingStartTime = Date.now();
 	const compositedBuffer = await compositeImages(
 		imageArrayBuffer, restoredBuffer, maskArrayBuffer, originalWidth, originalHeight
 	);
+	console.log(`Compositing took ${Date.now() - compositingStartTime}ms`);
 
 	// Upload to Vercel Blob and get the public URL.
 	const { url: imageUrl } = await put(
@@ -67,6 +72,8 @@ export async function eraseObject(input: EraseInput, env: AppContext["env"]): Pr
 		new Blob([compositedBuffer], { type: "image/png" }),
 		{ access: "public", token: env.VERCEL_BLOB_TOKEN }
 	);
+
+	console.log(`Total processing time: ${Date.now() - startTime}ms`);
 
 	return {
 		success: true,

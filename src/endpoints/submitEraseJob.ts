@@ -2,6 +2,7 @@ import { OpenAPIRoute } from "chanfana";
 import { z } from "zod";
 import { type AppContext } from "../types";
 import { eraseObject } from "../services/imageEraser";
+import { getImageDimensions } from "../utils/image-processing";
 
 export class SubmitEraseJob extends OpenAPIRoute {
 	schema = {
@@ -60,11 +61,37 @@ export class SubmitEraseJob extends OpenAPIRoute {
 			return Response.json({ success: false, error: "Missing valid 'mask' file" }, { status: 400 });
 		}
 
+		// Enforce size limits to prevent CPU timeouts.
+		const MAX_FILE_SIZE = 4.5 * 1024 * 1024; // 4.5 MB
+		if (imageFile.size > MAX_FILE_SIZE || maskFile.size > MAX_FILE_SIZE) {
+			return Response.json(
+				{ success: false, error: `Files must be under ${MAX_FILE_SIZE / 1024 / 1024}MB` },
+				{ status: 400 }
+			);
+		}
+
 		const strength = formData.get("strength");
 		const guidance = formData.get("guidance");
 
 		const imageBuffer = await imageFile.arrayBuffer();
 		const maskBuffer  = await maskFile.arrayBuffer();
+
+		// Validate image dimensions early.
+		try {
+			const { width, height } = await getImageDimensions(imageBuffer);
+			const MAX_DIMENSION = 2048;
+			if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+				return Response.json(
+					{ success: false, error: `Image dimensions must not exceed ${MAX_DIMENSION}x${MAX_DIMENSION}` },
+					{ status: 400 }
+				);
+			}
+		} catch (e) {
+			return Response.json(
+				{ success: false, error: "Failed to read image dimensions" },
+				{ status: 400 }
+			);
+		}
 
 		// saveDebugImageAndMask(c, imageBuffer, maskBuffer);
 

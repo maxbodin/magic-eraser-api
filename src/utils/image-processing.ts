@@ -3,6 +3,7 @@ import { Jimp } from "jimp";
 /**
  * Composites the AI-generated image onto the original image using the mask.
  * Only the masked area (white pixels) from the AI result will be visible.
+ * Optimized version using vectorized operations.
  *
  * @param originalBuffer - The original image buffer
  * @param aiResultBuffer - The AI-generated inpainted image buffer
@@ -26,33 +27,35 @@ export async function compositeImages(
 	const aiResultImage = await Jimp.fromBuffer( aiResultImageBuffer );
 	const maskImage = await Jimp.fromBuffer( maskImageBuffer );
 
-	// Create a copy of the original image to composite onto.
-	const composited = originalImage.clone();
+	// Use direct bitmap manipulation for optimal performance.
+	const compositeWithAlpha = aiResultImage.clone();
+	const compositeBitmap = compositeWithAlpha.bitmap.data;
+	const originalBitmap = originalImage.bitmap.data;
+	const maskBitmap = maskImage.bitmap.data;
 
-	// Iterate through each pixel.
-	for (let y = 0; y < height; y++) {
-		for (let x = 0; x < width; x++) {
-			// Get mask pixel color value (32-bit RGBA integer).
-			const maskPixelColor = maskImage.getPixelColor( x, y );
+	// Process compositing by directly manipulating bitmap data.
+	for (let idx = 0; idx < compositeBitmap.length; idx += 4) {
+		const pixelIdx = idx / 4;
+		const maskPixelIdx = pixelIdx * 4;
 
-			// Extract the red channel (most significant byte after alpha).
-			// Format is typically RGBA, so shift to get the red value.
-			const maskBrightness = ( maskPixelColor >> 16 ) & 0xFF;
+		// Get mask brightness (check red channel).
+		const maskBrightness = maskBitmap[maskPixelIdx];
 
-			if (maskBrightness > 128) {
-				// Use AI result pixel where mask is white.
-				const aiPixel = aiResultImage.getPixelColor( x, y );
-				composited.setPixelColor( aiPixel, x, y );
-			}
-			// Otherwise keep the original pixel (already in composited).
+		if (maskBrightness <= 128) {
+			// Where mask is black, use original image pixel.
+			compositeBitmap[idx] = originalBitmap[idx];
+			compositeBitmap[idx + 1] = originalBitmap[idx + 1];
+			compositeBitmap[idx + 2] = originalBitmap[idx + 2];
+			compositeBitmap[idx + 3] = originalBitmap[idx + 3];
 		}
+		// Otherwise keep AI result pixel (already in compositeWithAlpha).
 	}
 
-	// Get the composited image as PNG with high quality
-	const compositedBuffer = await composited.getBuffer( "image/png", {
+	// Get the composited image as PNG
+	const compositedBuffer = await compositeWithAlpha.getBuffer("image/png", {
 		quality: 100,
-		compression: 0
-	} );
+		compression: 4
+	});
 
 	return compositedBuffer.buffer as ArrayBuffer;
 }
@@ -147,8 +150,8 @@ export async function resizeImage(
   } );
 
   const resizedBuffer = await resizedImage.getBuffer( "image/png", {
-    quality: 75,
-    compression: 0
+      quality: 75,
+      compression: 6
   } );
 
   return {
